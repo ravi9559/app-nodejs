@@ -2,6 +2,7 @@ import { genres } from '../../test/fixtures/genres.js'
 import NotFoundError from '../errors/not-found.error.js'
 import { toNativeTypes } from '../utils.js'
 
+
 export default class GenreService {
   /**
    * @type {neo4j.Driver}
@@ -37,11 +38,37 @@ export default class GenreService {
    */
   // tag::all[]
   async all() {
-    // TODO: Open a new session
-    // TODO: Get a list of Genres from the database
-    // TODO: Close the session
+    // TODO: Open a new session 
 
-    return genres
+    const session = this.driver.session() 
+
+
+
+    // TODO: Get a list of Genres from the database 
+
+    const res = await session.executeRead(tx => tx.run(`
+      MATCH (g:Genre)
+      WHERE g.name <> '(no genres listed)'
+      CALL {
+        WITH g
+        MATCH (g)<-[:IN_GENRE]-(m:Movie)
+        WHERE m.imdbRating IS NOT NULL
+        AND m.poster IS NOT NULL
+        RETURN m.poster AS poster
+        ORDER BY m.imdbRating DESC LIMIT 1
+      }
+      RETURN g {
+        .*,
+        poster: poster
+      } as genre
+      ORDER BY g.name ASC
+    `))
+  
+    // TODO: Close the session 
+
+     await session.close()
+// Return results 
+return res.records.map(row => toNativeTypes(row.get('genre'))) 
   }
   // end::all[]
 
@@ -57,13 +84,47 @@ export default class GenreService {
    */
   // tag::find[]
   async find(name) {
-    // TODO: Open a new session
-    // TODO: Get Genre information from the database
-    // TODO: Throw a 404 Error if the genre is not found
-    // TODO: Close the session
-
-    return genres.find(genre => genre.name === name)
+    const session = this.driver.session();
+  
+    try {
+      const res = await session.executeRead(tx =>
+        tx.run(
+          `
+          MATCH (g:Genre {name: $name})
+          CALL {
+            WITH g
+            MATCH (g)<-[:IN_GENRE]-(m:Movie)
+            WHERE m.imdbRating IS NOT NULL AND m.poster IS NOT NULL
+            RETURN m.poster AS poster
+            ORDER BY m.imdbRating DESC
+            LIMIT 1
+          }
+          RETURN g {
+            .*,
+            poster: poster,
+            movies: size((g)<-[:IN_GENRE]-(:Movie))
+          } AS genre
+          `,
+          { name }
+        )
+      );
+  
+      if (res.records.length === 0) {
+        throw new NotFoundError(`Genre '${name}' not found.`);
+      }
+  
+      const genre = toNativeTypes(res.records[0].get('genre'));
+  
+      console.log(`Genre found: ${genre.name}`);
+  
+      return genre;
+  
+    } finally {
+      await session.close();
+    }
   }
+  
+  
   // end::find[]
 
 }

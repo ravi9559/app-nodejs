@@ -1,7 +1,9 @@
 import NotFoundError from '../errors/not-found.error.js'
 import { toNativeTypes } from '../utils.js'
 
+
 // TODO: Import the `int` function from neo4j-driver
+import { int } from 'neo4j-driver'
 
 import { goodfellas, popular } from '../../test/fixtures/movies.js'
 
@@ -40,11 +42,30 @@ export default class FavoriteService {
    */
   // tag::all[]
   async all(userId, sort = 'title', order = 'ASC', limit = 6, skip = 0) {
-    // TODO: Open a new session
-    // TODO: Retrieve a list of movies favorited by the user
-    // TODO: Close session
-
-    return popular
+    // Open a new session
+    const session = await this.driver.session()
+  
+    // Retrieve a list of movies favorited by the user
+    const res = await session.executeRead(
+      tx => tx.run(
+        `
+          MATCH (u:User {userId: $userId})-[:HAS_FAVORITE]->(m:Movie)
+          RETURN m {
+            .*,
+            favorite: true
+          } AS movie
+          ORDER BY m.\`${sort}\` ${order}
+          SKIP $skip
+          LIMIT $limit
+        `,
+        { userId, skip: int(skip), limit: int(limit) }
+      )
+    )
+  
+    // Close session
+    await session.close()
+  
+    return res.records.map(row => toNativeTypes(row.get('movie')))
   }
   // end::all[]
 
@@ -61,15 +82,41 @@ export default class FavoriteService {
    */
   // tag::add[]
   async add(userId, movieId) {
-    // TODO: Open a new Session
-    // TODO: Create HAS_FAVORITE relationship within a Write Transaction
-    // TODO: Close the session
-    // TODO: Return movie details and `favorite` property
-
-    return {
-      ...goodfellas,
-      favorite: true,
+    // Open a new Session
+    const session = this.driver.session()
+  
+    // Create HAS_FAVORITE relationship within a Write Transaction
+    const res = await session.executeWrite(
+      tx => tx.run(
+        `
+          MATCH (u:User {userId: $userId})
+          MATCH (m:Movie {tmdbId: $movieId})
+          MERGE (u)-[r:HAS_FAVORITE]->(m)
+          ON CREATE SET u.createdAt = datetime()
+          RETURN m {
+            .*,
+            favorite: true
+          } AS movie
+        `,
+        { userId, movieId, }
+      )
+    )
+  
+    // Throw an error if the user or movie could not be found
+    if ( res.records.length === 0 ) {
+      throw new NotFoundError(
+        `Could not create favorite relationship between User ${userId} and Movie ${movieId}`
+      )
     }
+  
+    // Close the session
+    await session.close()
+  
+    // Return movie details and `favorite` property
+    const [ first ] = res.records
+    const movie = first.get('movie')
+  
+    return toNativeTypes(movie)
   }
   // end::add[]
 
@@ -87,15 +134,39 @@ export default class FavoriteService {
    */
   // tag::remove[]
   async remove(userId, movieId) {
-    // TODO: Open a new Session
-    // TODO: Delete the HAS_FAVORITE relationship within a Write Transaction
-    // TODO: Close the session
-    // TODO: Return movie details and `favorite` property
+    // Open a new Session
+    const session = this.driver.session()
 
-    return {
-      ...goodfellas,
-      favorite: false,
+    // Create HAS_FAVORITE relationship within a Write Transaction
+    const res = await session.executeWrite(
+      tx => tx.run(
+        `
+          MATCH (u:User {userId: $userId})-[r:HAS_FAVORITE]->(m:Movie {tmdbId: $movieId})
+          DELETE r
+          RETURN m {
+            .*,
+            favorite: false
+          } AS movie
+        `,
+        { userId, movieId, }
+      )
+    )
+
+    // Throw an error if the user or movie could not be found
+    if ( res.records.length === 0 ) {
+      throw new NotFoundError(
+        `Could not remove favorite relationship between User ${userId} and Movie ${movieId}`
+      )
     }
+
+    // Close the session
+    await session.close()
+
+    // Return movie details and `favorite` property
+    const [ first ] = res.records
+    const movie = first.get('movie')
+
+    return toNativeTypes(movie)
   }
   // end::remove[]
 
