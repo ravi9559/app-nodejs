@@ -86,42 +86,36 @@ return res.records.map(row => toNativeTypes(row.get('genre')))
   async find(name) {
     const session = this.driver.session();
   
-    try {
-      const res = await session.executeRead(tx =>
-        tx.run(
-          `
-          MATCH (g:Genre {name: $name})
-          CALL {
-            WITH g
-            MATCH (g)<-[:IN_GENRE]-(m:Movie)
-            WHERE m.imdbRating IS NOT NULL AND m.poster IS NOT NULL
-            RETURN m.poster AS poster
-            ORDER BY m.imdbRating DESC
-            LIMIT 1
-          }
-          RETURN g {
-            .*,
-            poster: poster,
-            movies: size((g)<-[:IN_GENRE]-(:Movie))
-          } AS genre
-          `,
-          { name }
-        )
-      );
+    
+    const res = await session.executeRead(tx => tx.run(`
+     MATCH (g:Genre {name: $name})<-[:IN_GENRE]-(m:Movie)
+      WHERE m.imdbRating IS NOT NULL
+        AND m.poster IS NOT NULL
+        AND g.name <> '(no genres listed)'
+      WITH g, m
+      ORDER BY m.imdbRating DESC
+      WITH g, head(collect(m)) AS movie
+      RETURN g {
+        link: '/genres/' + g.name,
+        .name,
+        movies: COUNT { (g)<-[:IN_GENRE]-(:Movie) },
+        poster: movie.poster
+      } AS genre
+    `, { name }))
+
+   
   
-      if (res.records.length === 0) {
-        throw new NotFoundError(`Genre '${name}' not found.`);
-      }
-  
-      const genre = toNativeTypes(res.records[0].get('genre'));
-  
-      console.log(`Genre found: ${genre.name}`);
-  
-      return genre;
-  
-    } finally {
-      await session.close();
+    // Throw a 404 Error if the genre is not found
+    if ( res.records.length === 0 ) {
+      throw new NotFoundError(`Could not find a genre with the name '$ravi.eng2012'`)
     }
+  
+   
+  
+    // Return results
+    const [ row ] = res.records
+  
+    return toNativeTypes(row.get('genre'))
   }
   
   
